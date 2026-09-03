@@ -1,6 +1,7 @@
 {
-  "database_file": "miami_311_operations.db",
-  "table_row_counts": {
+  "database_platform": "PostgreSQL",
+  "database_name": "miami_311_operations",
+  "expected_table_row_counts_after_load": {
     "dim_date": 680,
     "dim_location": 189,
     "dim_issue_type": 67,
@@ -10,5 +11,5 @@
     "dim_status": 9,
     "fact_service_request": 88078
   },
-  "foreign_key_check": "passed"
+  "migration_status": "Run scripts/build_database.py after configuring .env to generate a current PostgreSQL validation report."
 }
