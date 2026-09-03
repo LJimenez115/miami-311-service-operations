@@ -1,19 +1,28 @@
--- Why: SQLite is portable, requires no server setup, and Power BI can connect to it
--- through its SQLite connector or through an exported fact/dimension table set.
-PRAGMA foreign_keys = ON;
+-- Why: PostgreSQL is the portfolio database platform because it is an industry-standard
+-- relational database that Power BI can connect to with its built-in PostgreSQL connector.
+DROP TABLE IF EXISTS fact_service_request CASCADE;
+DROP TABLE IF EXISTS dim_status CASCADE;
+DROP TABLE IF EXISTS dim_priority CASCADE;
+DROP TABLE IF EXISTS dim_intake_method CASCADE;
+DROP TABLE IF EXISTS dim_case_owner CASCADE;
+DROP TABLE IF EXISTS dim_issue_type CASCADE;
+DROP TABLE IF EXISTS dim_location CASCADE;
+DROP TABLE IF EXISTS dim_date CASCADE;
+-- Why: These drops make a rebuild deterministic inside the dedicated project database;
+-- the loader refuses to run if DATABASE_URL names a different database.
 
 -- Why: A dedicated date dimension prevents repeated calendar calculations in every
 -- dashboard visual and supports both created-date and closed-date analysis.
 CREATE TABLE IF NOT EXISTS dim_date (
     date_key INTEGER PRIMARY KEY,
-    calendar_date TEXT NOT NULL UNIQUE,
+    calendar_date DATE NOT NULL UNIQUE,
     calendar_year INTEGER NOT NULL,
     calendar_quarter INTEGER NOT NULL,
     calendar_month INTEGER NOT NULL,
     month_name TEXT NOT NULL,
     day_of_month INTEGER NOT NULL,
     day_name TEXT NOT NULL,
-    is_weekend INTEGER NOT NULL CHECK (is_weekend IN (0, 1))
+    is_weekend BOOLEAN NOT NULL
 );
 -- Why: This table supplies one consistent calendar definition to every fact row.
 
@@ -84,14 +93,14 @@ CREATE TABLE IF NOT EXISTS fact_service_request (
     intake_method_key INTEGER NOT NULL,
     priority_key INTEGER NOT NULL,
     status_key INTEGER NOT NULL,
-    created_at TEXT NOT NULL,
-    last_updated_at TEXT,
-    closed_at TEXT,
-    goal_days REAL,
-    resolution_days_source REAL,
-    resolution_days_calculated REAL,
-    is_overdue_source INTEGER,
-    is_closed INTEGER NOT NULL CHECK (is_closed IN (0, 1)),
+    created_at TIMESTAMPTZ NOT NULL,
+    last_updated_at TIMESTAMPTZ,
+    closed_at TIMESTAMPTZ,
+    goal_days NUMERIC,
+    resolution_days_source NUMERIC,
+    resolution_days_calculated NUMERIC,
+    is_overdue_source BOOLEAN,
+    is_closed BOOLEAN NOT NULL,
     FOREIGN KEY (created_date_key) REFERENCES dim_date(date_key),
     FOREIGN KEY (closed_date_key) REFERENCES dim_date(date_key),
     FOREIGN KEY (location_key) REFERENCES dim_location(location_key),
