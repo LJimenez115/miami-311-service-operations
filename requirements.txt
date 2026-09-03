@@ -4,3 +4,9 @@ pandas>=2.2,<3.0
 matplotlib>=3.8,<4.0
 # Why: seaborn provides clear, consistent statistical chart styling on top of matplotlib.
 seaborn>=0.13,<1.0
+# Why: SQLAlchemy provides a consistent PostgreSQL connection layer for pandas data loads.
+SQLAlchemy>=2.0,<3.0
+# Why: psycopg is the modern PostgreSQL driver used by SQLAlchemy to load the star schema.
+psycopg[binary]>=3.2,<4.0
+# Why: python-dotenv reads a local DATABASE_URL from .env without exposing credentials in Git.
+python-dotenv>=1.0,<2.0
