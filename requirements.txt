@@ -1,0 +1,6 @@
+# Why: pandas performs the tabular cleaning and EDA without manually looping over 88k records.
+pandas>=2.2,<3.0
+# Why: matplotlib writes portable chart images that can be reviewed before building Power BI visuals.
+matplotlib>=3.8,<4.0
+# Why: seaborn provides clear, consistent statistical chart styling on top of matplotlib.
+seaborn>=0.13,<1.0

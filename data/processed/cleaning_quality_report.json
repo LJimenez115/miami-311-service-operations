@@ -1,0 +1,11 @@
+{
+  "row_count": 88078,
+  "unique_ticket_id_count": 88078,
+  "duplicate_source_object_ids": 0,
+  "missing_created_at": 0,
+  "missing_ticket_id": 0,
+  "missing_issue_type": 0,
+  "closed_request_count": 84686,
+  "open_request_count": 3392,
+  "negative_duration_count": 0
+}

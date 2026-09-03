@@ -1,0 +1,7 @@
+metric,value
+total_requests,88078
+closed_requests,84686
+requests_with_resolution_duration,84686
+missing_issue_type,0
+missing_zip_code,0
+missing_case_owner,0

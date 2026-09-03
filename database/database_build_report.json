@@ -1,0 +1,14 @@
+{
+  "database_file": "miami_311_operations.db",
+  "table_row_counts": {
+    "dim_date": 680,
+    "dim_location": 189,
+    "dim_issue_type": 67,
+    "dim_case_owner": 8,
+    "dim_intake_method": 14,
+    "dim_priority": 6,
+    "dim_status": 9,
+    "fact_service_request": 88078
+  },
+  "foreign_key_check": "passed"
+}
