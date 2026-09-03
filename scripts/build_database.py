@@ -1,12 +1,15 @@
-"""Build the normalized SQLite database from the cleaned Miami 311 dataset."""
+"""Build the normalized PostgreSQL database from the cleaned Miami 311 dataset."""
 
 from __future__ import annotations
 
 import json
-import sqlite3
+import os
 from pathlib import Path
 
 import pandas as pd
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Connection, make_url
 
 
 # Why: Every path is calculated from this file so the build works from VS Code or
@@ -15,8 +18,24 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CLEAN_FILE = PROJECT_ROOT / "data" / "processed" / "miami_311_service_requests_clean.csv"
 SCHEMA_FILE = PROJECT_ROOT / "sql" / "01_create_schema.sql"
 DATABASE_DIR = PROJECT_ROOT / "database"
-DATABASE_FILE = DATABASE_DIR / "miami_311_operations.db"
 BUILD_REPORT = DATABASE_DIR / "database_build_report.json"
+DATABASE_NAME = "miami_311_operations"
+
+
+def get_database_url() -> str:
+    """Read and validate the local PostgreSQL connection string."""
+    # Why: Loading `.env` keeps the password outside source control while allowing a
+    # beginner-friendly `DATABASE_URL` configuration in VS Code or a terminal.
+    load_dotenv(PROJECT_ROOT / ".env")
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        raise ValueError("DATABASE_URL is missing. Copy .env.example to .env and add your password.")
+    parsed_url = make_url(database_url)
+    # Why: The schema intentionally drops only project tables for repeatable loads,
+    # so this guard prevents a connection typo from targeting another database.
+    if parsed_url.database != DATABASE_NAME:
+        raise ValueError(f"DATABASE_URL must use the dedicated `{DATABASE_NAME}` database.")
+    return database_url
 
 
 def safe_text(series: pd.Series) -> pd.Series:
@@ -31,7 +50,7 @@ def make_dimension(
     columns: list[str],
     key_column: str,
     table_name: str,
-    connection: sqlite3.Connection,
+    connection: Connection,
     database_column_names: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     """Create one surrogate-key dimension and return its natural-key mapping."""
@@ -46,7 +65,7 @@ def make_dimension(
     return dimension
 
 
-def build_date_dimension(frame: pd.DataFrame, connection: sqlite3.Connection) -> pd.DataFrame:
+def build_date_dimension(frame: pd.DataFrame, connection: Connection) -> pd.DataFrame:
     """Create one row per created or closed local calendar date."""
     # Why: A single conformed date dimension serves both created and closed dates,
     # which enables consistent calendar filtering across multiple measures.
@@ -57,14 +76,14 @@ def build_date_dimension(frame: pd.DataFrame, connection: sqlite3.Connection) ->
     all_dates = pd.Series(pd.concat([created_dates, closed_dates]).dropna().unique())
     dates = pd.DataFrame({"calendar_date_value": sorted(all_dates)})
     dates["date_key"] = dates["calendar_date_value"].dt.strftime("%Y%m%d").astype(int)
-    dates["calendar_date"] = dates["calendar_date_value"].dt.strftime("%Y-%m-%d")
+    dates["calendar_date"] = dates["calendar_date_value"].dt.date
     dates["calendar_year"] = dates["calendar_date_value"].dt.year
     dates["calendar_quarter"] = dates["calendar_date_value"].dt.quarter
     dates["calendar_month"] = dates["calendar_date_value"].dt.month
     dates["month_name"] = dates["calendar_date_value"].dt.month_name()
     dates["day_of_month"] = dates["calendar_date_value"].dt.day
     dates["day_name"] = dates["calendar_date_value"].dt.day_name()
-    dates["is_weekend"] = dates["calendar_date_value"].dt.dayofweek.isin([5, 6]).astype(int)
+    dates["is_weekend"] = dates["calendar_date_value"].dt.dayofweek.isin([5, 6])
     output_columns = [
         "date_key", "calendar_date", "calendar_year", "calendar_quarter", "calendar_month",
         "month_name", "day_of_month", "day_name", "is_weekend",
@@ -92,14 +111,13 @@ def main() -> None:
     if source["ticket_id"].duplicated().any():
         raise ValueError("ticket_id must be unique before loading facts.")
 
-    # Why: Rebuilding from scratch keeps reruns deterministic and prevents a second
-    # load from silently duplicating fact rows in a local portfolio database.
-    if DATABASE_FILE.exists():
-        DATABASE_FILE.unlink()
-
-    with sqlite3.connect(DATABASE_FILE) as connection:
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.executescript(SCHEMA_FILE.read_text(encoding="utf-8"))
+    # Why: PostgreSQL holds the shared database outside this repository, while the
+    # schema file recreates only the dedicated project's tables on each verified run.
+    engine = create_engine(get_database_url())
+    with engine.begin() as connection:
+        for statement in SCHEMA_FILE.read_text(encoding="utf-8").split(";"):
+            if statement.strip():
+                connection.exec_driver_sql(statement)
 
         date_dimension = build_date_dimension(source, connection)
         location_dimension = make_dimension(
@@ -149,8 +167,15 @@ def main() -> None:
             fact = fact.merge(dimension, on=keys, how="left")
 
         fact.insert(0, "service_request_key", range(1, len(fact) + 1))
-        fact["is_closed"] = fact["is_closed"].astype(int)
-        fact["is_overdue_source"] = pd.to_numeric(fact["is_overdue_source"], errors="coerce")
+        # Why: Explicit datetime and boolean types let PostgreSQL enforce the same
+        # business meaning that Power BI will use for time and status calculations.
+        for column in ["created_at", "last_updated_at", "closed_at"]:
+            fact[column] = pd.to_datetime(fact[column], errors="coerce", utc=True)
+        fact["is_closed"] = fact["is_closed"].astype(bool)
+        overdue_numeric = pd.to_numeric(fact["is_overdue_source"], errors="coerce")
+        fact["is_overdue_source"] = overdue_numeric.map(
+            lambda value: None if pd.isna(value) else bool(value)
+        )
         fact_columns = [
             "service_request_key", "source_object_id", "ticket_id", "created_date_key", "closed_date_key",
             "location_key", "issue_type_key", "case_owner_key", "intake_method_key", "priority_key",
@@ -162,27 +187,30 @@ def main() -> None:
         # Why: Counting each table after loading confirms both the expected fact
         # grain and that dimensions were populated before the database is delivered.
         counts = {
-            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            table: connection.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one()
             for table in [
                 "dim_date", "dim_location", "dim_issue_type", "dim_case_owner", "dim_intake_method",
                 "dim_priority", "dim_status", "fact_service_request",
             ]
         }
-        invalid_foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
-        if invalid_foreign_keys:
-            raise ValueError(f"Foreign-key validation failed: {invalid_foreign_keys}")
+        # Why: PostgreSQL rejects invalid foreign keys during the insert itself; a
+        # successful transaction is therefore the integrity check for this rebuild.
+        foreign_key_check = "passed (PostgreSQL constraints enforced during insert)"
+
+    engine.dispose()
 
     # Why: The build report provides quick evidence that the database was created
     # completely and can be compared to the cleaned-data row count in future reruns.
     BUILD_REPORT.write_text(
-        json.dumps({"database_file": DATABASE_FILE.name, "table_row_counts": counts, "foreign_key_check": "passed"}, indent=2),
+        json.dumps({"database_platform": "PostgreSQL", "database_name": DATABASE_NAME,
+                    "table_row_counts": counts, "foreign_key_check": foreign_key_check}, indent=2),
         encoding="utf-8",
     )
-    print(f"Created database: {DATABASE_FILE}")
+    print(f"Loaded PostgreSQL database: {DATABASE_NAME}")
     print(f"Created build report: {BUILD_REPORT}")
 
 
 if __name__ == "__main__":
     # Why: The guard permits importing helper functions for testing without an
-    # accidental destructive rebuild of the local SQLite database.
+    # accidental rebuild of the dedicated PostgreSQL project database.
     main()
